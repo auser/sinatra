@@ -116,6 +116,27 @@ module Sinatra
   def env
     application.options.env
   end
+  
+  def daemonize?
+    application.options.daemonize
+  end
+  
+  # Daemonize the process
+  def daemonize
+    puts "== (Daemonized) Sinatra has taken the stage on port #{port} for #{env}"
+    
+    pid = fork do
+      Signal.trap('HUP', 'IGNORE') # Don't die upon logout
+      File.open("/dev/null", "r+") do |devnull|
+        $stdout.reopen(devnull)
+        $stderr.reopen(devnull)
+        $stdin.reopen(devnull) unless @use_stdin
+      end
+      yield if block_given?
+    end
+    Process.detach(pid)
+    pid
+  end
 
   # Deprecated: use application instead of build_application.
   alias :build_application :application
@@ -134,18 +155,21 @@ module Sinatra
   end
   
   def run
-    begin
-      puts "== Sinatra has taken the stage on port #{port} for #{env} with backup by #{server.name}"
-      require 'pp'
-      server.run(application, {:Port => port, :Host => host}) do |server|
-        trap(:INT) do
-          server.stop
-          puts "\n== Sinatra has ended his set (crowd applauds)"
+    block = lambda {
+      begin
+        puts "== Sinatra has taken the stage on port #{port} for #{env}"
+        require 'pp'
+        Rack::Handler::Mongrel.run(build_application, :Port => port) do |server|
+          trap(:INT) do
+            server.stop
+            puts "\n== Sinatra has ended his set (crowd applauds)"
+          end
         end
+      rescue Errno::EADDRINUSE => e
+        puts "== Someone is already performing on port #{port}!"
       end
-    rescue Errno::EADDRINUSE => e
-      puts "== Someone is already performing on port #{port}!"
-    end
+    }
+    daemonize? ? daemonize(&block) : block.call
   end
 
   class Event
@@ -914,7 +938,8 @@ module Sinatra
         :sessions => false,
         :logging => true,
         :app_file => $0,
-        :raise_errors => false
+        :raise_errors => false,
+        :daemonize => false
       }
       load_default_options_from_command_line!
       @default_options
@@ -931,6 +956,7 @@ module Sinatra
         op.on('-e env') { |env| default_options[:env] = env.to_sym }
         op.on('-x') { default_options[:mutex] = true }
         op.on('-s server') { |server| default_options[:server] = server }
+        op.on('-d') {|d| default_options[:daemonize] = true}
       end.parse!(ARGV.dup.select { |o| o !~ /--name/ })
     end
 
