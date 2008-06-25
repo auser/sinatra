@@ -154,6 +154,7 @@ module Sinatra
     @server ||= eval("Rack::Handler::#{handler}")
   end
   
+  
   def run
     block = lambda {
       begin
